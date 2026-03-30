@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bun install:*)",
+      "Bash(bun run:*)",
+      "Bash(bun test:*)",
+      "Bash(bunx:*)",
+      "Bash(git:*)",
+      "Bash(ls:*)",
+      "Bash(bd:*)",
+      "Bash(.specify/scripts/bash/*)"
+    ]
+  }
+}
