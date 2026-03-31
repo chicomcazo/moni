@@ -11,6 +11,10 @@ export function getBot(): Bot {
 }
 
 function registerHandlers(bot: Bot) {
+  bot.catch((err) => {
+    console.error("Bot error:", err);
+  });
+
   bot.command("start", async (ctx) => {
     await ctx.reply(
       "Olá! Manda uma foto da nota fiscal que eu extraio os itens pra você 🧾",
