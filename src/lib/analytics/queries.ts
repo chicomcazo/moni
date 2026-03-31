@@ -61,6 +61,19 @@ export async function getSpending(params: {
   start_date?: string;
   end_date?: string;
 }) {
+  // If filtering by category, first find matching category IDs
+  let categoryIds: string[] | null = null;
+  if (params.category) {
+    const { data: cats } = await supabase
+      .from("categories")
+      .select("id")
+      .ilike("name", `%${params.category}%`);
+    categoryIds = (cats ?? []).map((c) => c.id);
+    if (categoryIds.length === 0) {
+      return { total_spent: 0, item_count: 0, items: [] };
+    }
+  }
+
   let query = supabase
     .from("items")
     .select(
@@ -68,8 +81,8 @@ export async function getSpending(params: {
     )
     .eq("receipts.status", "completed");
 
-  if (params.category) {
-    query = query.ilike("categories.name", `%${params.category}%`);
+  if (categoryIds) {
+    query = query.in("category_id", categoryIds);
   }
   if (params.store) {
     query = query.ilike("receipts.store_name", `%${params.store}%`);
@@ -88,7 +101,7 @@ export async function getSpending(params: {
   const total = items.reduce((sum, i) => sum + Number(i.total_price), 0);
 
   return {
-    total_spent: total,
+    total_spent: Math.round(total * 100) / 100,
     item_count: items.length,
     items: items.map((i) => ({
       name: i.normalized_name,
