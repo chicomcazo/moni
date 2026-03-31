@@ -61,6 +61,9 @@ async function sendMessage(
 async function getFileUrl(fileId: string): Promise<string> {
   const res = await fetch(`${TELEGRAM_API}/getFile?file_id=${fileId}`);
   const data = await res.json();
+  if (!data.ok || !data.result?.file_path) {
+    throw new Error(`Telegram getFile failed: ${JSON.stringify(data)}`);
+  }
   return `https://api.telegram.org/file/bot${BOT_TOKEN}/${data.result.file_path}`;
 }
 
@@ -212,20 +215,21 @@ async function handlePhoto(
   } catch (err) {
     console.error("Error processing receipt:", err);
     const errorMessage =
-      err instanceof Error ? err.message : "Erro desconhecido";
-    try {
-      await sendMessage(chatId, `❌ Erro: ${errorMessage}`, {
-        ...replyOpts,
+      err instanceof Error ? err.message : String(err);
+    // Send error without any fancy formatting — maximum reliability
+    await fetch(`${TELEGRAM_API}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: `❌ Erro: ${errorMessage.slice(0, 500)}`,
         reply_markup: {
           inline_keyboard: [
             [{ text: "🔄 Tentar novamente", callback_data: `retry:${fileId}` }],
           ],
         },
-      });
-    } catch {
-      // Last resort — plain message without formatting or buttons
-      await sendMessage(chatId, `Erro ao processar: ${errorMessage}`);
-    }
+      }),
+    });
   }
 }
 
