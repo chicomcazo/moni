@@ -140,14 +140,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error("Telegram webhook top-level error:", err);
-    // Try to send error to user
-    try {
-      const chatId = (await req.clone().json())?.message?.chat?.id;
-      if (chatId) {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        await sendMessage(chatId, `⚠️ Erro interno: ${errMsg}`);
-      }
-    } catch { /* ignore send failure */ }
     return NextResponse.json({ ok: true });
   }
 }
@@ -161,10 +153,11 @@ async function handlePhoto(
     ? { reply_to_message_id: photoMessageId }
     : {};
 
-  await sendMessage(chatId, "Recebi a nota! Processando...", replyOpts);
+  await sendMessage(chatId, "📸 Recebi a nota! Processando...", replyOpts);
 
   try {
     const fileUrl = await getFileUrl(fileId);
+    await sendMessage(chatId, "🔍 Lendo nota fiscal...");
 
     const { processReceipt } = await import("@/lib/pipeline/process-receipt");
     const result = await processReceipt(fileUrl, chatId, photoMessageId ?? 0);
@@ -218,24 +211,21 @@ async function handlePhoto(
     });
   } catch (err) {
     console.error("Error processing receipt:", err);
-
     const errorMessage =
-      err instanceof Error
-        ? `${err.message}${err.stack ? "\n" + err.stack.split("\n")[1] : ""}`
-        : "Erro desconhecido";
-
-    await sendMessage(
-      chatId,
-      `Erro ao processar a nota: ${errorMessage}`,
-      {
+      err instanceof Error ? err.message : "Erro desconhecido";
+    try {
+      await sendMessage(chatId, `❌ Erro: ${errorMessage}`, {
         ...replyOpts,
         reply_markup: {
           inline_keyboard: [
             [{ text: "🔄 Tentar novamente", callback_data: `retry:${fileId}` }],
           ],
         },
-      },
-    );
+      });
+    } catch {
+      // Last resort — plain message without formatting or buttons
+      await sendMessage(chatId, `Erro ao processar: ${errorMessage}`);
+    }
   }
 }
 
