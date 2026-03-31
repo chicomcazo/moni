@@ -17,18 +17,31 @@ export interface OcrResult {
   raw_text: string;
 }
 
+async function imageUrlToBase64(url: string): Promise<string> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to download image: ${response.status}`);
+  }
+  const buffer = await response.arrayBuffer();
+  return Buffer.from(buffer).toString("base64");
+}
+
 export async function extractReceiptData(
   imageUrl: string,
 ): Promise<OcrResult> {
+  // Download image and convert to base64 (Telegram URLs require auth)
+  const base64 = await imageUrlToBase64(imageUrl);
+  const dataUrl = `data:image/jpeg;base64,${base64}`;
+
   const response = await client.chat.complete({
-    model: "pixtral-large-latest",
+    model: "mistral-small-latest",
     messages: [
       {
         role: "user",
         content: [
           {
             type: "image_url",
-            imageUrl: imageUrl,
+            imageUrl: dataUrl,
           },
           {
             type: "text",
