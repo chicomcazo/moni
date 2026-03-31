@@ -1,7 +1,5 @@
-import { Mistral } from "@mistralai/mistralai";
 import OpenAI from "openai";
 
-const mistral = new Mistral({ apiKey: process.env.MISTRAL_API_KEY! });
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
 export interface OcrItem {
@@ -182,17 +180,32 @@ export async function extractReceiptData(
   const base64 = await imageUrlToBase64(imageUrl);
   const dataUrl = `data:image/jpeg;base64,${base64}`;
 
-  // Step 1: Mistral OCR (dedicated endpoint, no vision rate limit)
-  const ocrResponse = await mistral.ocr.process({
-    model: "mistral-ocr-latest",
-    document: {
-      type: "image_url",
-      imageUrl: dataUrl,
+  // Step 1: Mistral OCR via direct API call (SDK has issues on Vercel)
+  const ocrRes = await fetch("https://api.mistral.ai/v1/ocr", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.MISTRAL_API_KEY}`,
+      "Content-Type": "application/json",
     },
+    body: JSON.stringify({
+      model: "mistral-ocr-latest",
+      document: {
+        type: "image_url",
+        image_url: dataUrl,
+      },
+    }),
   });
 
+  if (!ocrRes.ok) {
+    const errBody = await ocrRes.text();
+    throw new Error(`Mistral OCR failed (${ocrRes.status}): ${errBody.slice(0, 200)}`);
+  }
+
+  const ocrData = (await ocrRes.json()) as {
+    pages?: { markdown: string }[];
+  };
   const rawText =
-    ocrResponse.pages?.map((page) => page.markdown).join("\n") ?? "";
+    ocrData.pages?.map((page) => page.markdown).join("\n") ?? "";
 
   if (!rawText) {
     throw new Error("OCR returned empty text");
