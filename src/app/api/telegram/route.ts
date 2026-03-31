@@ -5,6 +5,15 @@ export const maxDuration = 60;
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN!;
 const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
+/** Convert Markdown formatting to Telegram HTML */
+function mdToHtml(text: string): string {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")
+    .replace(/\*(.+?)\*/g, "<i>$1</i>")
+    .replace(/__(.+?)__/g, "<u>$1</u>")
+    .replace(/`(.+?)`/g, "<code>$1</code>");
+}
+
 async function sendMessage(
   chatId: number,
   text: string,
@@ -14,7 +23,8 @@ async function sendMessage(
     parse_mode?: string;
   },
 ) {
-  const body: Record<string, unknown> = { chat_id: chatId, text };
+  const finalText = options?.parse_mode === "HTML" ? mdToHtml(text) : text;
+  const body: Record<string, unknown> = { chat_id: chatId, text: finalText };
   if (options?.reply_to_message_id) {
     body.reply_parameters = { message_id: options.reply_to_message_id };
   }
