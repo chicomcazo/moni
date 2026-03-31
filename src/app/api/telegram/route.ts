@@ -8,7 +8,11 @@ const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 async function sendMessage(
   chatId: number,
   text: string,
-  options?: { reply_to_message_id?: number; reply_markup?: unknown },
+  options?: {
+    reply_to_message_id?: number;
+    reply_markup?: unknown;
+    parse_mode?: string;
+  },
 ) {
   const body: Record<string, unknown> = { chat_id: chatId, text };
   if (options?.reply_to_message_id) {
@@ -16,6 +20,9 @@ async function sendMessage(
   }
   if (options?.reply_markup) {
     body.reply_markup = options.reply_markup;
+  }
+  if (options?.parse_mode) {
+    body.parse_mode = options.parse_mode;
   }
   await fetch(`${TELEGRAM_API}/sendMessage`, {
     method: "POST",
@@ -139,25 +146,41 @@ async function handlePhoto(
 
     const lines = result.items.map(
       (item) =>
-        `• ${item.normalized_name} — R$ ${item.total_price.toFixed(2)}`,
+        `  • ${item.normalized_name} <i>[${item.category}]</i> — <b>R$ ${item.total_price.toFixed(2)}</b>`,
     );
     const dateTime = [result.receipt_date, result.receipt_time]
       .filter(Boolean)
-      .join(" ");
+      .join(" às ");
+
+    const hasUncertain = result.items.some(
+      (item) =>
+        item.category === "Outros" ||
+        item.normalized_name === item.raw_name,
+    );
+
     const summary = [
-      result.store_name ? `🏪 ${result.store_name}` : "🧾 Nota processada",
-      result.cnpj ? `🏢 CNPJ: ${result.cnpj}` : "",
+      result.store_name
+        ? `🏪 <b>${result.store_name}</b>`
+        : "🧾 <b>Nota processada</b>",
+      result.cnpj ? `🏢 ${result.cnpj}` : "",
       dateTime ? `📅 ${dateTime}` : "",
       "",
       ...lines,
       "",
-      `💰 Total: R$ ${result.items_total.toFixed(2)}`,
+      `💰 <b>Total: R$ ${result.items_total.toFixed(2)}</b>`,
       `📦 ${result.items.length} itens extraídos`,
+      "",
+      hasUncertain
+        ? '⚠️ <i>Algumas categorias podem estar erradas.</i>\nPra corrigir, me diz: <code>panqueijo é Pão</code>'
+        : '✅ Categorias corretas? Se não, me diz: <code>[item] é [categoria]</code>',
     ]
       .filter(Boolean)
       .join("\n");
 
-    await sendMessage(chatId, summary, replyOpts);
+    await sendMessage(chatId, summary, {
+      ...replyOpts,
+      parse_mode: "HTML",
+    });
   } catch (err) {
     console.error("Error processing receipt:", err);
 
@@ -187,7 +210,10 @@ async function handleText(
   try {
     const { answerQuestion } = await import("@/lib/analytics/agent");
     const answer = await answerQuestion(text);
-    await sendMessage(chatId, answer, { reply_to_message_id: messageId });
+    await sendMessage(chatId, answer, {
+      reply_to_message_id: messageId,
+      parse_mode: "HTML",
+    });
   } catch (err) {
     console.error("Error answering question:", err);
     await sendMessage(
@@ -237,7 +263,10 @@ async function handleVoice(
     // 3. Process as text question
     const { answerQuestion } = await import("@/lib/analytics/agent");
     const answer = await answerQuestion(text);
-    await sendMessage(chatId, answer, { reply_to_message_id: messageId });
+    await sendMessage(chatId, answer, {
+      reply_to_message_id: messageId,
+      parse_mode: "HTML",
+    });
   } catch (err) {
     console.error("Error processing voice:", err);
     await sendMessage(

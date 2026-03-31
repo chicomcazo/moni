@@ -6,6 +6,7 @@ import {
   getItemHistory,
   comparePeriods,
   getSummary,
+  correctCategory,
 } from "./queries";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
@@ -132,6 +133,28 @@ const tools: OpenAI.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "correct_category",
+      description:
+        "Corrige a categoria de um item. Use quando o usuário disser algo como 'panqueijo é Pão' ou 'manteiga avi é Manteiga'. Atualiza o item e o cache para futuras notas.",
+      parameters: {
+        type: "object",
+        properties: {
+          item_name: {
+            type: "string",
+            description: "Nome do item a corrigir (busca parcial)",
+          },
+          correct_category: {
+            type: "string",
+            description: "Categoria correta (ex: Pão, Manteiga, Carne Bovina)",
+          },
+        },
+        required: ["item_name", "correct_category"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "get_summary",
       description:
         "Resumo geral de gastos num período. Use para 'resumo do mês' ou 'quanto gastei no total?'",
@@ -154,6 +177,7 @@ const functionMap: Record<string, (params: any) => Promise<unknown>> = {
   get_item_history: getItemHistory,
   compare_periods: comparePeriods,
   get_summary: getSummary,
+  correct_category: correctCategory,
 };
 
 const TODAY = () => new Date().toISOString().split("T")[0];
@@ -167,7 +191,9 @@ Regras:
 - Formate valores monetários como R$ X,XX (vírgula para decimais, padrão brasileiro).
 - Se não encontrar dados, diga que não há registros para o período/categoria.
 - Não invente dados. Só responda com base no resultado das funções.
-- Seja breve mas informativo. Use listas quando fizer sentido.`;
+- Seja breve mas informativo. Use listas quando fizer sentido.
+- Quando o usuário pedir pra corrigir uma categoria (ex: "panqueijo é Pão"), use a função correct_category.
+- Formate a resposta usando HTML do Telegram: <b>negrito</b>, <i>itálico</i>, <code>código</code>. NÃO use Markdown (**bold**, *italic*).`;
 
 export async function answerQuestion(question: string): Promise<string> {
   const messages: OpenAI.ChatCompletionMessageParam[] = [

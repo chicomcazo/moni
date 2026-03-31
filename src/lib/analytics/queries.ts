@@ -1,5 +1,60 @@
 import { supabase } from "@/lib/supabase/client";
 
+export async function correctCategory(params: {
+  item_name: string;
+  correct_category: string;
+}) {
+  // 1. Upsert the correct category
+  const { data: category } = await supabase
+    .from("categories")
+    .upsert({ name: params.correct_category }, { onConflict: "name" })
+    .select("id")
+    .single();
+
+  if (!category) {
+    return { success: false, message: "Falha ao criar categoria" };
+  }
+
+  // 2. Find items matching the name
+  const { data: items } = await supabase
+    .from("items")
+    .select("id, raw_name, normalized_name")
+    .ilike("normalized_name", `%${params.item_name}%`);
+
+  if (!items || items.length === 0) {
+    return {
+      success: false,
+      message: `Nenhum item encontrado com nome "${params.item_name}"`,
+    };
+  }
+
+  // 3. Update items to new category
+  const itemIds = items.map((i) => i.id);
+  await supabase
+    .from("items")
+    .update({ category_id: category.id })
+    .in("id", itemIds);
+
+  // 4. Update category_mappings cache for future receipts
+  for (const item of items) {
+    const pattern = item.raw_name.toUpperCase().trim();
+    await supabase.from("category_mappings").upsert(
+      {
+        raw_name_pattern: pattern,
+        category_id: category.id,
+        normalized_name: item.normalized_name,
+      },
+      { onConflict: "raw_name_pattern" },
+    );
+  }
+
+  return {
+    success: true,
+    message: `${items.length} item(s) "${params.item_name}" recategorizado(s) para "${params.correct_category}"`,
+    updated_count: items.length,
+  };
+}
+
 export async function getSpending(params: {
   category?: string;
   store?: string;
