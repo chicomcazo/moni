@@ -12,33 +12,45 @@ export interface CategorizedItem {
 export async function categorizeItems(
   items: { raw_name: string }[],
 ): Promise<CategorizedItem[]> {
-  const uncached: string[] = [];
-  const cached = new Map<
+  // Filter out invalid items
+  const validItems = items.filter(
+    (item) => item.raw_name && typeof item.raw_name === "string",
+  );
+
+  if (validItems.length === 0) {
+    return items.map((item) => ({
+      raw_name: item.raw_name ?? "",
+      normalized_name: item.raw_name ?? "",
+      category: "Outros",
+    }));
+  }
+
+  // Check cache in batch
+  const patterns = validItems.map((item) =>
+    item.raw_name.toUpperCase().trim(),
+  );
+  const { data: cachedMappings } = await supabase
+    .from("category_mappings")
+    .select("raw_name_pattern, normalized_name, categories(name)")
+    .in("raw_name_pattern", patterns);
+
+  const cacheMap = new Map<
     string,
     { normalized_name: string; category: string }
   >();
-
-  // Phase 1: Check cache
-  for (const item of items) {
-    const pattern = item.raw_name.toUpperCase().trim();
-    const { data } = await supabase
-      .from("category_mappings")
-      .select("normalized_name, categories(name)")
-      .eq("raw_name_pattern", pattern)
-      .single();
-
-    if (data) {
-      const categories = data.categories as unknown as { name: string };
-      cached.set(item.raw_name, {
-        normalized_name: data.normalized_name,
-        category: categories.name,
-      });
-    } else {
-      uncached.push(item.raw_name);
-    }
+  for (const mapping of cachedMappings ?? []) {
+    const categories = mapping.categories as unknown as { name: string };
+    cacheMap.set(mapping.raw_name_pattern, {
+      normalized_name: mapping.normalized_name,
+      category: categories.name,
+    });
   }
 
-  // Phase 2: Call OpenAI for uncached items only
+  const uncached = validItems.filter(
+    (item) => !cacheMap.has(item.raw_name.toUpperCase().trim()),
+  );
+
+  // Call OpenAI for uncached items only (single batch call)
   let newMappings: CategorizedItem[] = [];
 
   if (uncached.length > 0) {
@@ -49,6 +61,7 @@ export async function categorizeItems(
           role: "system",
           content: `Você categoriza itens de notas fiscais brasileiras de supermercado/loja.
 Para cada item, forneça:
+- raw_name: o nome exato como recebido
 - normalized_name: nome limpo em português (ex: "PAO FRANCES 500G" -> "Pão Francês")
 - category: categoria específica do item (ex: "Pão", "Carne Bovina", "Leite", "Cerveja", "Arroz")
 
@@ -58,19 +71,21 @@ Retorne um objeto JSON com a chave "items" contendo o array.`,
         },
         {
           role: "user",
-          content: JSON.stringify(uncached),
+          content: JSON.stringify(uncached.map((i) => i.raw_name)),
         },
       ],
       response_format: { type: "json_object" },
     });
 
     const parsed = JSON.parse(response.choices[0].message.content!) as {
-      items: { raw_name: string; normalized_name: string; category: string }[];
+      items: CategorizedItem[];
     };
-    newMappings = parsed.items;
+    newMappings = parsed.items ?? [];
 
-    // Phase 3: Cache new mappings
+    // Cache new mappings in batch
     for (const mapping of newMappings) {
+      if (!mapping.raw_name || !mapping.category) continue;
+
       const { data: category } = await supabase
         .from("categories")
         .upsert({ name: mapping.category }, { onConflict: "name" })
@@ -92,16 +107,22 @@ Retorne um objeto JSON com a chave "items" contendo o array.`,
 
   // Merge results
   return items.map((item) => {
-    const fromCache = cached.get(item.raw_name);
+    const rawName = item.raw_name ?? "";
+    const pattern = rawName.toUpperCase().trim();
+
+    const fromCache = cacheMap.get(pattern);
     if (fromCache) {
-      return { raw_name: item.raw_name, ...fromCache };
+      return { raw_name: rawName, ...fromCache };
     }
-    const fromNew = newMappings.find((m) => m.raw_name === item.raw_name);
+
+    const fromNew = newMappings.find(
+      (m) => m.raw_name?.toUpperCase().trim() === pattern,
+    );
     if (fromNew) return fromNew;
-    // Fallback: return raw name as-is
+
     return {
-      raw_name: item.raw_name,
-      normalized_name: item.raw_name,
+      raw_name: rawName,
+      normalized_name: rawName,
       category: "Outros",
     };
   });

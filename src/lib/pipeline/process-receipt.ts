@@ -42,34 +42,45 @@ export async function processReceipt(
     // 2. Extract items via OCR
     const ocrResult = await extractReceiptData(imageUrl);
 
-    // 3. Categorize items
-    const categorized = await categorizeItems(
-      ocrResult.items.map((item) => ({ raw_name: item.raw_name })),
+    // Filter valid items from OCR
+    const validOcrItems = ocrResult.items.filter(
+      (item) => item.raw_name && item.total_price != null,
     );
 
-    // 4. Save items to database
-    const itemsToInsert = ocrResult.items.map((ocrItem, index) => ({
+    if (validOcrItems.length === 0) {
+      throw new Error("Nenhum item encontrado na nota fiscal");
+    }
+
+    // 3. Categorize items
+    const categorized = await categorizeItems(
+      validOcrItems.map((item) => ({ raw_name: item.raw_name })),
+    );
+
+    // 4. Resolve category IDs in parallel
+    const uniqueCategories = [...new Set(categorized.map((c) => c.category))];
+    const categoryIdMap = new Map<string, string>();
+
+    await Promise.all(
+      uniqueCategories.map(async (name) => {
+        const { data } = await supabase
+          .from("categories")
+          .upsert({ name }, { onConflict: "name" })
+          .select("id")
+          .single();
+        if (data) categoryIdMap.set(name, data.id);
+      }),
+    );
+
+    // 5. Save items to database
+    const itemsToInsert = validOcrItems.map((ocrItem, index) => ({
       receipt_id: receipt.id,
       raw_name: ocrItem.raw_name,
       normalized_name: categorized[index].normalized_name,
-      quantity: ocrItem.quantity,
-      unit_price: ocrItem.unit_price,
+      quantity: ocrItem.quantity ?? 1,
+      unit_price: ocrItem.unit_price ?? null,
       total_price: ocrItem.total_price,
+      category_id: categoryIdMap.get(categorized[index].category) ?? null,
     }));
-
-    // Resolve category IDs
-    for (let i = 0; i < itemsToInsert.length; i++) {
-      const categoryName = categorized[i].category;
-      const { data: category } = await supabase
-        .from("categories")
-        .upsert({ name: categoryName }, { onConflict: "name" })
-        .select("id")
-        .single();
-
-      if (category) {
-        (itemsToInsert[i] as Record<string, unknown>).category_id = category.id;
-      }
-    }
 
     const { error: itemsError } = await supabase
       .from("items")
@@ -79,8 +90,8 @@ export async function processReceipt(
       throw new Error(`Failed to save items: ${itemsError.message}`);
     }
 
-    // 5. Update receipt with extracted data
-    const itemsTotal = ocrResult.items.reduce(
+    // 6. Update receipt with extracted data
+    const itemsTotal = validOcrItems.reduce(
       (sum, item) => sum + item.total_price,
       0,
     );
@@ -103,7 +114,7 @@ export async function processReceipt(
       store_name: ocrResult.store_name,
       receipt_date: ocrResult.receipt_date,
       items_total: itemsTotal,
-      items: ocrResult.items.map((ocrItem, index) => ({
+      items: validOcrItems.map((ocrItem, index) => ({
         raw_name: ocrItem.raw_name,
         normalized_name: categorized[index].normalized_name,
         category: categorized[index].category,
