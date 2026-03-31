@@ -9,6 +9,7 @@ export interface ProcessedReceipt {
   receipt_date: string | null;
   receipt_time: string | null;
   items_total: number;
+  duplicate: boolean;
   items: {
     raw_name: string;
     normalized_name: string;
@@ -20,12 +21,93 @@ export interface ProcessedReceipt {
   }[];
 }
 
+async function checkDuplicate(
+  cnpj: string | null,
+  receiptDate: string | null,
+  receiptTime: string | null,
+  totalAmount: number | null,
+): Promise<string | null> {
+  // Need at least date + one more identifier
+  if (!receiptDate) return null;
+
+  let query = supabase
+    .from("receipts")
+    .select("id")
+    .eq("status", "completed")
+    .eq("receipt_date", receiptDate);
+
+  if (cnpj) {
+    query = query.eq("cnpj", cnpj);
+  }
+  if (receiptTime) {
+    query = query.eq("receipt_time", receiptTime);
+  }
+  if (totalAmount != null) {
+    query = query.eq("total_amount", totalAmount);
+  }
+
+  const { data } = await query.limit(1).single();
+  return data?.id ?? null;
+}
+
 export async function processReceipt(
   imageUrl: string,
   chatId: number,
   messageId: number,
 ): Promise<ProcessedReceipt> {
-  // 1. Create receipt record in "processing" status
+  // 1. Extract items via OCR first (before creating DB record)
+  const ocrResult = await extractReceiptData(imageUrl);
+
+  // Filter valid items from OCR
+  const validOcrItems = ocrResult.items.filter(
+    (item) => item.raw_name && item.total_price != null,
+  );
+
+  if (validOcrItems.length === 0) {
+    throw new Error("Nenhum item encontrado na nota fiscal");
+  }
+
+  // 2. Check for duplicates
+  const duplicateId = await checkDuplicate(
+    ocrResult.cnpj,
+    ocrResult.receipt_date,
+    ocrResult.receipt_time,
+    ocrResult.total_amount,
+  );
+
+  if (duplicateId) {
+    // Fetch existing receipt data to return
+    const { data: existingItems } = await supabase
+      .from("items")
+      .select("raw_name, normalized_name, product_code, quantity, unit_price, total_price, categories(name)")
+      .eq("receipt_id", duplicateId);
+
+    const itemsTotal = validOcrItems.reduce(
+      (sum, item) => sum + item.total_price,
+      0,
+    );
+
+    return {
+      receipt_id: duplicateId,
+      store_name: ocrResult.store_name,
+      cnpj: ocrResult.cnpj,
+      receipt_date: ocrResult.receipt_date,
+      receipt_time: ocrResult.receipt_time,
+      items_total: itemsTotal,
+      duplicate: true,
+      items: (existingItems ?? []).map((item) => ({
+        raw_name: item.raw_name,
+        normalized_name: item.normalized_name,
+        category: (item.categories as unknown as { name: string })?.name ?? "Outros",
+        product_code: item.product_code,
+        quantity: Number(item.quantity),
+        unit_price: item.unit_price ? Number(item.unit_price) : null,
+        total_price: Number(item.total_price),
+      })),
+    };
+  }
+
+  // 3. Create receipt record
   const { data: receipt, error: receiptError } = await supabase
     .from("receipts")
     .insert({
@@ -42,24 +124,12 @@ export async function processReceipt(
   }
 
   try {
-    // 2. Extract items via OCR
-    const ocrResult = await extractReceiptData(imageUrl);
-
-    // Filter valid items from OCR
-    const validOcrItems = ocrResult.items.filter(
-      (item) => item.raw_name && item.total_price != null,
-    );
-
-    if (validOcrItems.length === 0) {
-      throw new Error("Nenhum item encontrado na nota fiscal");
-    }
-
-    // 3. Categorize items
+    // 4. Categorize items
     const categorized = await categorizeItems(
       validOcrItems.map((item) => ({ raw_name: item.raw_name })),
     );
 
-    // 4. Resolve category IDs in parallel
+    // 5. Resolve category IDs in parallel
     const uniqueCategories = [...new Set(categorized.map((c) => c.category))];
     const categoryIdMap = new Map<string, string>();
 
@@ -74,7 +144,7 @@ export async function processReceipt(
       }),
     );
 
-    // 5. Save items to database
+    // 6. Save items to database
     const itemsToInsert = validOcrItems.map((ocrItem, index) => ({
       receipt_id: receipt.id,
       raw_name: ocrItem.raw_name,
@@ -94,7 +164,7 @@ export async function processReceipt(
       throw new Error(`Failed to save items: ${itemsError.message}`);
     }
 
-    // 6. Update receipt with extracted data
+    // 7. Update receipt with extracted data
     const itemsTotal = validOcrItems.reduce(
       (sum, item) => sum + item.total_price,
       0,
@@ -123,6 +193,7 @@ export async function processReceipt(
       receipt_date: ocrResult.receipt_date,
       receipt_time: ocrResult.receipt_time,
       items_total: itemsTotal,
+      duplicate: false,
       items: validOcrItems.map((ocrItem, index) => ({
         raw_name: ocrItem.raw_name,
         normalized_name: categorized[index].normalized_name,

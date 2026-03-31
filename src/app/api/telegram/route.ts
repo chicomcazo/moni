@@ -115,6 +115,15 @@ async function handlePhoto(
     const { processReceipt } = await import("@/lib/pipeline/process-receipt");
     const result = await processReceipt(fileUrl, chatId, photoMessageId ?? 0);
 
+    if (result.duplicate) {
+      await sendMessage(
+        chatId,
+        "⚠️ Nota fiscal já registrada! Essa nota já foi processada anteriormente.",
+        replyOpts,
+      );
+      return;
+    }
+
     const lines = result.items.map(
       (item) =>
         `• ${item.normalized_name} — R$ ${item.total_price.toFixed(2)}`,
