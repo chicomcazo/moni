@@ -1,18 +1,32 @@
 import { NextResponse } from "next/server";
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN!;
 const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
-/** Convert Markdown formatting to Telegram HTML */
-function mdToHtml(text: string): string {
+/** Escape HTML special characters */
+function escapeHtml(text: string): string {
   return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+/** Convert Markdown formatting to Telegram HTML (for agent responses) */
+function mdToHtml(text: string): string {
+  // Escape HTML entities first, then convert markdown to tags
+  let escaped = escapeHtml(text);
+  escaped = escaped
     .replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")
     .replace(/\*(.+?)\*/g, "<i>$1</i>")
     .replace(/__(.+?)__/g, "<u>$1</u>")
     .replace(/`(.+?)`/g, "<code>$1</code>");
+  return escaped;
 }
+
+/** Shorthand for escaping dynamic text in HTML templates */
+const h = escapeHtml;
 
 async function sendMessage(
   chatId: number,
@@ -21,9 +35,12 @@ async function sendMessage(
     reply_to_message_id?: number;
     reply_markup?: unknown;
     parse_mode?: string;
+    rawHtml?: boolean;
   },
 ) {
-  const finalText = options?.parse_mode === "HTML" ? mdToHtml(text) : text;
+  const finalText = options?.parse_mode === "HTML" && !options?.rawHtml
+    ? mdToHtml(text)
+    : text;
   const body: Record<string, unknown> = { chat_id: chatId, text: finalText };
   if (options?.reply_to_message_id) {
     body.reply_parameters = { message_id: options.reply_to_message_id };
@@ -163,7 +180,7 @@ async function handlePhoto(
 
     const lines = result.items.map(
       (item) =>
-        `  • ${item.normalized_name} <i>[${item.category}]</i> — <b>R$ ${item.total_price.toFixed(2)}</b>`,
+        `  • ${h(item.normalized_name)} <i>[${h(item.category)}]</i> — <b>R$ ${item.total_price.toFixed(2)}</b>`,
     );
     const dateTime = [result.receipt_date, result.receipt_time]
       .filter(Boolean)
@@ -177,10 +194,10 @@ async function handlePhoto(
 
     const summary = [
       result.store_name
-        ? `🏪 <b>${result.store_name}</b>`
+        ? `🏪 <b>${h(result.store_name)}</b>`
         : "🧾 <b>Nota processada</b>",
-      result.cnpj ? `🏢 ${result.cnpj}` : "",
-      dateTime ? `📅 ${dateTime}` : "",
+      result.cnpj ? `🏢 ${h(result.cnpj)}` : "",
+      dateTime ? `📅 ${h(dateTime)}` : "",
       "",
       ...lines,
       "",
@@ -194,23 +211,11 @@ async function handlePhoto(
       .filter(Boolean)
       .join("\n");
 
-    // Try HTML first, fallback to plain text
-    const htmlRes = await fetch(`${TELEGRAM_API}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: mdToHtml(summary),
-        parse_mode: "HTML",
-        ...(replyOpts.reply_to_message_id && {
-          reply_parameters: { message_id: replyOpts.reply_to_message_id },
-        }),
-      }),
+    await sendMessage(chatId, summary, {
+      ...replyOpts,
+      parse_mode: "HTML",
+      rawHtml: true,
     });
-    if (!htmlRes.ok) {
-      // Fallback: send without formatting
-      await sendMessage(chatId, summary.replace(/<[^>]+>/g, ""), replyOpts);
-    }
   } catch (err) {
     console.error("Error processing receipt:", err);
 
