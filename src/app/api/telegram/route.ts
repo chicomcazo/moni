@@ -119,9 +119,13 @@ async function handlePhoto(
       (item) =>
         `• ${item.normalized_name} — R$ ${item.total_price.toFixed(2)}`,
     );
+    const dateTime = [result.receipt_date, result.receipt_time]
+      .filter(Boolean)
+      .join(" ");
     const summary = [
       result.store_name ? `🏪 ${result.store_name}` : "🧾 Nota processada",
-      result.receipt_date ? `📅 ${result.receipt_date}` : "",
+      result.cnpj ? `🏢 CNPJ: ${result.cnpj}` : "",
+      dateTime ? `📅 ${dateTime}` : "",
       "",
       ...lines,
       "",

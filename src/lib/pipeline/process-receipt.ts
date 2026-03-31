@@ -5,12 +5,15 @@ import { supabase } from "@/lib/supabase/client";
 export interface ProcessedReceipt {
   receipt_id: string;
   store_name: string | null;
+  cnpj: string | null;
   receipt_date: string | null;
+  receipt_time: string | null;
   items_total: number;
   items: {
     raw_name: string;
     normalized_name: string;
     category: string;
+    product_code: string | null;
     quantity: number;
     unit_price: number | null;
     total_price: number;
@@ -76,6 +79,7 @@ export async function processReceipt(
       receipt_id: receipt.id,
       raw_name: ocrItem.raw_name,
       normalized_name: categorized[index].normalized_name,
+      product_code: ocrItem.product_code ?? null,
       quantity: ocrItem.quantity ?? 1,
       unit_price: ocrItem.unit_price ?? null,
       total_price: ocrItem.total_price,
@@ -100,7 +104,10 @@ export async function processReceipt(
       .from("receipts")
       .update({
         store_name: ocrResult.store_name,
+        cnpj: ocrResult.cnpj,
+        ie: ocrResult.ie,
         receipt_date: ocrResult.receipt_date,
+        receipt_time: ocrResult.receipt_time,
         total_amount: ocrResult.total_amount,
         items_total: itemsTotal,
         raw_ocr_text: ocrResult.raw_text,
@@ -112,12 +119,15 @@ export async function processReceipt(
     return {
       receipt_id: receipt.id,
       store_name: ocrResult.store_name,
+      cnpj: ocrResult.cnpj,
       receipt_date: ocrResult.receipt_date,
+      receipt_time: ocrResult.receipt_time,
       items_total: itemsTotal,
       items: validOcrItems.map((ocrItem, index) => ({
         raw_name: ocrItem.raw_name,
         normalized_name: categorized[index].normalized_name,
         category: categorized[index].category,
+        product_code: ocrItem.product_code ?? null,
         quantity: ocrItem.quantity,
         unit_price: ocrItem.unit_price,
         total_price: ocrItem.total_price,

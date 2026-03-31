@@ -6,6 +6,7 @@ export const itemSchema = z.object({
   category_id: z.string().uuid().nullable(),
   raw_name: z.string().min(1),
   normalized_name: z.string().min(1),
+  product_code: z.string().nullable(),
   quantity: z.number().positive(),
   unit_price: z.number().nonnegative().nullable(),
   total_price: z.number().nonnegative(),

@@ -12,7 +12,10 @@ CREATE TABLE receipts (
   telegram_chat_id BIGINT NOT NULL,
   telegram_message_id BIGINT,
   store_name TEXT,
+  cnpj TEXT,
+  ie TEXT,
   receipt_date DATE,
+  receipt_time TIME,
   total_amount DECIMAL(10,2),
   items_total DECIMAL(10,2),
   image_url TEXT,
@@ -30,6 +33,7 @@ CREATE TABLE items (
   category_id UUID REFERENCES categories(id),
   raw_name TEXT NOT NULL,
   normalized_name TEXT NOT NULL,
+  product_code TEXT,
   quantity DECIMAL(10,3) DEFAULT 1,
   unit_price DECIMAL(10,2),
   total_price DECIMAL(10,2) NOT NULL,
@@ -55,3 +59,5 @@ CREATE INDEX idx_receipts_status ON receipts(status);
 CREATE INDEX idx_items_receipt_id ON items(receipt_id);
 CREATE INDEX idx_items_category_id ON items(category_id);
 CREATE INDEX idx_category_mappings_pattern ON category_mappings(raw_name_pattern);
+CREATE INDEX idx_receipts_cnpj ON receipts(cnpj);
+CREATE INDEX idx_items_product_code ON items(product_code);
