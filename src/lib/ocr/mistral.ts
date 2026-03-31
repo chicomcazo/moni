@@ -1,7 +1,8 @@
 import { Mistral } from "@mistralai/mistralai";
+import OpenAI from "openai";
 
 const mistral = new Mistral({ apiKey: process.env.MISTRAL_API_KEY! });
-
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
 export interface OcrItem {
   raw_name: string;
@@ -34,7 +35,6 @@ async function imageUrlToBase64(url: string): Promise<string> {
 function parseReceiptText(rawText: string): Omit<OcrResult, "raw_text"> {
   const lines = rawText.split("\n").map((l) => l.trim());
 
-  // Extract store name (usually one of the first non-empty lines after header)
   let store_name: string | null = null;
   let cnpj: string | null = null;
   let ie: string | null = null;
@@ -43,12 +43,10 @@ function parseReceiptText(rawText: string): Omit<OcrResult, "raw_text"> {
   let total_amount: number | null = null;
 
   for (const line of lines) {
-    // CNPJ: XX.XXX.XXX/XXXX-XX or CNPJ:XXXXXXXXXX (OCR sometimes reads CNPJ as CHFJ, CNPI, etc)
     const cnpjMatch = line.match(
       /(?:CNPJ|CHFJ|CNPI|CNP)[:\s]*(\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2})/i,
     );
     if (cnpjMatch) {
-      // Format as XX.XXX.XXX/XXXX-XX
       const digits = cnpjMatch[1].replace(/\D/g, "");
       if (digits.length === 14) {
         cnpj = `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12)}`;
@@ -57,52 +55,30 @@ function parseReceiptText(rawText: string): Omit<OcrResult, "raw_text"> {
       }
     }
 
-    // IE
     const ieMatch = line.match(/IE[:\s]*(\d[\d.]+)/i);
-    if (ieMatch) {
-      ie = ieMatch[1];
-    }
+    if (ieMatch && !ie) ie = ieMatch[1];
 
-    // Date: DD/MM/YYYY
     const dateMatch = line.match(/(\d{2}\/\d{2}\/\d{4})/);
-    if (dateMatch && !receipt_date) {
-      receipt_date = dateMatch[1];
-    }
+    if (dateMatch && !receipt_date) receipt_date = dateMatch[1];
 
-    // Time: HH:MM:SS or HH:MM
     const timeMatch = line.match(/(\d{2}:\d{2}(?::\d{2})?)/);
-    if (timeMatch && !receipt_time && receipt_date) {
-      receipt_time = timeMatch[1];
-    }
+    if (timeMatch && !receipt_time && receipt_date) receipt_time = timeMatch[1];
 
-    // Total
-    const totalMatch = line.match(
-      /TOTAL\s+R?\$?\s*([\d.,]+)/i,
-    );
+    const totalMatch = line.match(/TOTAL\s+R?\$?\s*([\d.,]+)/i);
     if (totalMatch) {
-      total_amount = parseFloat(
-        totalMatch[1].replace(".", "").replace(",", "."),
-      );
-      // Handle case where it's already a decimal like 77.95
-      if (totalMatch[1].includes(".") && !totalMatch[1].includes(",")) {
-        total_amount = parseFloat(totalMatch[1]);
-      }
+      const val = totalMatch[1];
+      total_amount =
+        val.includes(",") && !val.includes(".")
+          ? parseFloat(val.replace(",", "."))
+          : parseFloat(val);
     }
 
-    // Store name: look for LTDA, SUPERMERCADO, etc.
     if (
       !store_name &&
-      (line.match(/LTDA|SUPERMERCADO|MERCADO|PADARIA|LOJA|COMERCIO/i) ||
-        line.match(/^[A-Z\s]{5,}$/))
+      line.match(/LTDA|SUPERMERCADO|MERCADO|PADARIA|LOJA|COMERCIO/i)
     ) {
-      // Clean up the store name
-      const cleaned = line
-        .replace(/^(PDF|POP|REF)\s+/i, "")
-        .replace(/BOX\s+\d+.*$/i, "")
-        .trim();
-      if (cleaned.length > 3) {
-        store_name = cleaned;
-      }
+      const cleaned = line.replace(/^(PDF|POP|REF)\s+/i, "").replace(/BOX\s+\d+.*$/i, "").trim();
+      if (cleaned.length > 3) store_name = cleaned;
     }
   }
 
@@ -118,12 +94,9 @@ function parseReceiptText(rawText: string): Omit<OcrResult, "raw_text"> {
     const col3 = match[3].trim();
     const col4 = match[4]?.trim();
 
-    // Parse quantity, unit price and total price from description
     let quantity = 1;
     let unit_price: number | null = null;
-    let total_price: number;
 
-    // Try to extract quantity from description like "0.260 Kg X 10.99"
     const qtyMatch = description.match(
       /([\d.]+)\s*(?:Kg|Un|kg|un)\s*X\s*([\d.]+)/i,
     );
@@ -132,16 +105,13 @@ function parseReceiptText(rawText: string): Omit<OcrResult, "raw_text"> {
       unit_price = parseFloat(qtyMatch[2]);
     }
 
-    // The last numeric column is typically total_price
-    if (col4 && col4.length > 0) {
-      total_price = parseFloat(col4.replace(",", "."));
-    } else {
-      total_price = parseFloat(col3.replace(",", "."));
-    }
+    const total_price =
+      col4 && col4.length > 0
+        ? parseFloat(col4.replace(",", "."))
+        : parseFloat(col3.replace(",", "."));
 
     if (isNaN(total_price)) continue;
 
-    // Extract just the item name from description (remove qty/price info)
     const rawName = description
       .replace(/\s*[\d.]+\s*(?:Kg|Un|kg|un)\s*X\s*[\d.]+/i, "")
       .replace(/\s+/g, " ")
@@ -156,13 +126,10 @@ function parseReceiptText(rawText: string): Omit<OcrResult, "raw_text"> {
     });
   }
 
-  // If table parsing didn't work, try line-by-line parsing
+  // Fallback line-by-line parsing
   if (items.length === 0) {
     for (const line of lines) {
-      // Match patterns like: 001 243210 SACOLA VERD.VALGRION 1 Un X 0.12 0.12
-      const itemMatch = line.match(
-        /\d{3}\s+(\d+)\s+(.+?)\s+([\d.]+)\s*$/,
-      );
+      const itemMatch = line.match(/\d{3}\s+(\d+)\s+(.+?)\s+([\d.]+)\s*$/);
       if (itemMatch) {
         items.push({
           raw_name: itemMatch[2].trim(),
@@ -175,15 +142,38 @@ function parseReceiptText(rawText: string): Omit<OcrResult, "raw_text"> {
     }
   }
 
-  return {
-    store_name,
-    cnpj,
-    ie,
-    receipt_date,
-    receipt_time,
-    total_amount,
-    items,
-  };
+  return { store_name, cnpj, ie, receipt_date, receipt_time, total_amount, items };
+}
+
+async function fixItemNames(
+  items: { raw_name: string; product_code: string | null }[],
+): Promise<string[]> {
+  if (items.length === 0) return [];
+
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [
+      {
+        role: "system",
+        content: `Você recebe nomes de itens de uma nota fiscal brasileira extraídos por OCR.
+O OCR frequentemente erra letras — corrija os nomes para o produto real mais provável.
+Exemplos: "OVD JUNB GRENCO" → "OVO JUMBO BRANCO", "ERWILN LONG" → "ERVILHA LONGA", "BATA DOCE" → "BATATA DOCE".
+Mantenha o nome curto e direto, como apareceria num supermercado.
+Retorne um JSON com a chave "names" contendo um array de strings corrigidas, na mesma ordem.`,
+      },
+      {
+        role: "user",
+        content: JSON.stringify(items.map((i) => i.raw_name)),
+      },
+    ],
+    response_format: { type: "json_object" },
+  });
+
+  const content = response.choices?.[0]?.message?.content;
+  if (!content) return items.map((i) => i.raw_name);
+
+  const parsed = JSON.parse(content) as { names: string[] };
+  return parsed.names ?? items.map((i) => i.raw_name);
 }
 
 export async function extractReceiptData(
@@ -192,7 +182,7 @@ export async function extractReceiptData(
   const base64 = await imageUrlToBase64(imageUrl);
   const dataUrl = `data:image/jpeg;base64,${base64}`;
 
-  // OCR with Mistral dedicated endpoint
+  // Step 1: Mistral OCR (dedicated endpoint, no vision rate limit)
   const ocrResponse = await mistral.ocr.process({
     model: "mistral-ocr-latest",
     document: {
@@ -208,8 +198,18 @@ export async function extractReceiptData(
     throw new Error("OCR returned empty text");
   }
 
-  // Parse the raw text directly — no GPT, no name changes
+  // Step 2: Parse structured data from OCR text (no API, instant)
   const parsed = parseReceiptText(rawText);
+
+  // Step 3: Fix OCR name errors with GPT-4o-mini (fast, cheap)
+  if (parsed.items.length > 0) {
+    const fixedNames = await fixItemNames(parsed.items);
+    for (let i = 0; i < parsed.items.length; i++) {
+      if (fixedNames[i]) {
+        parsed.items[i].raw_name = fixedNames[i];
+      }
+    }
+  }
 
   return { ...parsed, raw_text: rawText };
 }
