@@ -21,6 +21,14 @@ export interface ProcessedReceipt {
   }[];
 }
 
+/** Convert DD/MM/YYYY to YYYY-MM-DD for Postgres DATE column */
+function toIsoDate(dateStr: string | null): string | null {
+  if (!dateStr) return null;
+  const match = dateStr.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (match) return `${match[3]}-${match[2]}-${match[1]}`;
+  return dateStr; // already ISO or unknown format
+}
+
 async function checkDuplicate(
   cnpj: string | null,
   receiptDate: string | null,
@@ -68,9 +76,10 @@ export async function processReceipt(
   }
 
   // 2. Check for duplicates
+  const isoDate = toIsoDate(ocrResult.receipt_date);
   const duplicateId = await checkDuplicate(
     ocrResult.cnpj,
-    ocrResult.receipt_date,
+    isoDate,
     ocrResult.receipt_time,
     ocrResult.total_amount,
   );
@@ -176,7 +185,7 @@ export async function processReceipt(
         store_name: ocrResult.store_name,
         cnpj: ocrResult.cnpj,
         ie: ocrResult.ie,
-        receipt_date: ocrResult.receipt_date,
+        receipt_date: isoDate,
         receipt_time: ocrResult.receipt_time,
         total_amount: ocrResult.total_amount,
         items_total: itemsTotal,
