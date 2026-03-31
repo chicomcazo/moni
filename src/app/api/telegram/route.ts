@@ -77,7 +77,7 @@ export async function POST(req: Request) {
     if (message.text?.startsWith("/start")) {
       await sendMessage(
         chatId,
-        "Olá! Manda uma foto da nota fiscal que eu extraio os itens pra você 🧾",
+        "Olá! Sou a Moni, sua assistente financeira 💰\n\n📸 Manda uma foto da nota fiscal que eu extraio os itens\n💬 Pergunta qualquer coisa sobre seus gastos\n🎤 Manda um áudio que eu também entendo",
       );
       return NextResponse.json({ ok: true });
     }
@@ -86,6 +86,19 @@ export async function POST(req: Request) {
     if (message.photo && message.photo.length > 0) {
       const photo = message.photo[message.photo.length - 1];
       await handlePhoto(chatId, photo.file_id, message.message_id);
+      return NextResponse.json({ ok: true });
+    }
+
+    // Voice/audio message — transcribe and answer
+    if (message.voice || message.audio) {
+      const fileId = message.voice?.file_id ?? message.audio?.file_id;
+      await handleVoice(chatId, fileId, message.message_id);
+      return NextResponse.json({ ok: true });
+    }
+
+    // Text message — answer question
+    if (message.text) {
+      await handleText(chatId, message.text, message.message_id);
       return NextResponse.json({ ok: true });
     }
 
@@ -162,6 +175,75 @@ async function handlePhoto(
           ],
         },
       },
+    );
+  }
+}
+
+async function handleText(
+  chatId: number,
+  text: string,
+  messageId: number,
+) {
+  try {
+    const { answerQuestion } = await import("@/lib/analytics/agent");
+    const answer = await answerQuestion(text);
+    await sendMessage(chatId, answer, { reply_to_message_id: messageId });
+  } catch (err) {
+    console.error("Error answering question:", err);
+    await sendMessage(
+      chatId,
+      "Erro ao processar sua pergunta. Tente novamente.",
+      { reply_to_message_id: messageId },
+    );
+  }
+}
+
+async function handleVoice(
+  chatId: number,
+  fileId: string,
+  messageId: number,
+) {
+  try {
+    // 1. Download audio from Telegram
+    const fileUrl = await getFileUrl(fileId);
+    const audioResponse = await fetch(fileUrl);
+    if (!audioResponse.ok) {
+      throw new Error("Falha ao baixar o áudio");
+    }
+    const audioBuffer = await audioResponse.arrayBuffer();
+
+    // 2. Transcribe with OpenAI Whisper
+    const OpenAI = (await import("openai")).default;
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+
+    const file = new File([audioBuffer], "voice.ogg", {
+      type: "audio/ogg",
+    });
+
+    const transcription = await openai.audio.transcriptions.create({
+      model: "whisper-1",
+      file,
+      language: "pt",
+    });
+
+    const text = transcription.text;
+    if (!text) {
+      await sendMessage(chatId, "Não consegui entender o áudio.", {
+        reply_to_message_id: messageId,
+      });
+      return;
+    }
+
+    // 3. Process as text question
+    const { answerQuestion } = await import("@/lib/analytics/agent");
+    const answer = await answerQuestion(text);
+    await sendMessage(chatId, answer, { reply_to_message_id: messageId });
+  } catch (err) {
+    console.error("Error processing voice:", err);
+    await sendMessage(
+      chatId,
+      "Erro ao processar o áudio. Tente novamente.",
+      { reply_to_message_id: messageId },
     );
   }
 }
