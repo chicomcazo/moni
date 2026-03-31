@@ -123,7 +123,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error("Telegram webhook top-level error:", err);
-    // Always return 200 so Telegram doesn't retry
+    // Try to send error to user
+    try {
+      const chatId = (await req.clone().json())?.message?.chat?.id;
+      if (chatId) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        await sendMessage(chatId, `⚠️ Erro interno: ${errMsg}`);
+      }
+    } catch { /* ignore send failure */ }
     return NextResponse.json({ ok: true });
   }
 }
@@ -187,15 +194,30 @@ async function handlePhoto(
       .filter(Boolean)
       .join("\n");
 
-    await sendMessage(chatId, summary, {
-      ...replyOpts,
-      parse_mode: "HTML",
+    // Try HTML first, fallback to plain text
+    const htmlRes = await fetch(`${TELEGRAM_API}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: mdToHtml(summary),
+        parse_mode: "HTML",
+        ...(replyOpts.reply_to_message_id && {
+          reply_parameters: { message_id: replyOpts.reply_to_message_id },
+        }),
+      }),
     });
+    if (!htmlRes.ok) {
+      // Fallback: send without formatting
+      await sendMessage(chatId, summary.replace(/<[^>]+>/g, ""), replyOpts);
+    }
   } catch (err) {
     console.error("Error processing receipt:", err);
 
     const errorMessage =
-      err instanceof Error ? err.message : "Erro desconhecido";
+      err instanceof Error
+        ? `${err.message}${err.stack ? "\n" + err.stack.split("\n")[1] : ""}`
+        : "Erro desconhecido";
 
     await sendMessage(
       chatId,
