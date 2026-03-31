@@ -62,6 +62,9 @@ export async function extractReceiptData(
       {
         role: "system",
         content: `Você recebe o texto OCR de uma nota fiscal brasileira e deve extrair os dados em JSON estruturado.
+
+REGRA CRÍTICA: O campo "raw_name" deve conter o nome do item EXATAMENTE como aparece no texto OCR. NÃO corrija, NÃO interprete, NÃO adivinhe. Se o OCR diz "PANQUEIJO", escreva "PANQUEIJO" — não "PANQUEQUINHA" ou "PÃO DE QUEIJO". Copie literalmente.
+
 Retorne APENAS JSON válido com esta estrutura:
 {
   "store_name": "nome da loja ou null",
@@ -72,8 +75,8 @@ Retorne APENAS JSON válido com esta estrutura:
   "total_amount": 123.45,
   "items": [
     {
-      "raw_name": "texto exato do item",
-      "product_code": "código do produto ou null",
+      "raw_name": "COPIE O NOME EXATO DO OCR, SEM ALTERAR",
+      "product_code": "código numérico do produto ou null",
       "quantity": 1,
       "unit_price": 3.50,
       "total_price": 3.50
