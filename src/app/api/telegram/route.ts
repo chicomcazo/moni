@@ -180,7 +180,7 @@ async function handlePhoto(
 
     const lines = result.items.map(
       (item) =>
-        `  • ${h(item.normalized_name)} <i>[${h(item.category)}]</i> — <b>R$ ${item.total_price.toFixed(2)}</b>`,
+        `  • ${h(item.raw_name)} <i>[${h(item.category)}]</i> — <b>R$ ${item.total_price.toFixed(2)}</b>`,
     );
     const dateTime = [result.receipt_date, result.receipt_time]
       .filter(Boolean)
